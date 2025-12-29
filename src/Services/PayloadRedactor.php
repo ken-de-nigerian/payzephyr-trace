@@ -1,40 +1,57 @@
 <?php
 
+declare(strict_types=1);
+
 namespace PayZephyr\Trace\Services;
 
+/**
+ * Standalone service for payload redaction
+ * Implements recursive redaction with depth limits to prevent memory exhaustion
+ */
 class PayloadRedactor
 {
     private const REDACTED_VALUE = '[REDACTED]';
+    private const DEFAULT_MAX_DEPTH = 10;
 
     /**
      * Redact sensitive fields from payload
      */
-    public function redact(array $payload): array
+    public function redact(array $payload, ?int $maxDepth = null): array
     {
         $fieldsToRedact = config('trace.redact_fields', []);
+        $maxDepth = $maxDepth ?? config('trace.redaction_max_depth', self::DEFAULT_MAX_DEPTH);
 
-        return $this->redactRecursive($payload, $fieldsToRedact);
+        return $this->redactRecursive($payload, $fieldsToRedact, $maxDepth, 0);
     }
 
     /**
-     * Recursively redact sensitive fields
+     * Recursively redact sensitive fields with depth protection
      */
-    private function redactRecursive(array $data, array $fields): array
+    private function redactRecursive(array $data, array $fields, int $maxDepth, int $currentDepth): array
     {
+        // Prevent infinite recursion and memory exhaustion
+        if ($currentDepth >= $maxDepth) {
+            return ['[REDACTED: Max depth reached]'];
+        }
+
+        $redacted = [];
+
         foreach ($data as $key => $value) {
             // Check if current key should be redacted (case-insensitive)
             if ($this->shouldRedact($key, $fields)) {
-                $data[$key] = self::REDACTED_VALUE;
+                $redacted[$key] = self::REDACTED_VALUE;
                 continue;
             }
 
             // Recursively process nested arrays
             if (is_array($value)) {
-                $data[$key] = $this->redactRecursive($value, $fields);
+                $redacted[$key] = $this->redactRecursive($value, $fields, $maxDepth, $currentDepth + 1);
+            } else {
+                $redacted[$key] = $value;
             }
         }
 
-        return $data;
+        return $redacted;
     }
 
     /**

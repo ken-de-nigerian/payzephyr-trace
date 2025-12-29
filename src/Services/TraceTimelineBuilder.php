@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace PayZephyr\Trace\Services;
 
 use Illuminate\Support\Collection;
@@ -241,6 +243,140 @@ class DetailedTimeline extends Timeline
     }
 
     /**
+     * Detect anomalies in the timeline
+     * Flags orphaned requests and excessive latency
+     */
+    public function detectAnomalies(): array
+    {
+        $anomalies = [];
+
+        // Detect orphaned requests (outgoing without incoming)
+        $orphanedRequests = $this->detectOrphanedRequests();
+        if (!empty($orphanedRequests)) {
+            $anomalies = array_merge($anomalies, $orphanedRequests);
+        }
+
+        // Detect excessive latency
+        $excessiveLatency = $this->detectExcessiveLatency();
+        if (!empty($excessiveLatency)) {
+            $anomalies = array_merge($anomalies, $excessiveLatency);
+        }
+
+        return $anomalies;
+    }
+
+    /**
+     * Detect orphaned requests (outgoing without corresponding incoming)
+     */
+    private function detectOrphanedRequests(): array
+    {
+        $anomalies = [];
+
+        // Get all outbound requests
+        $outboundRequests = $this->events->filter(function (TraceEvent $event) {
+            return $event->direction->value === 'outbound'
+                && $event->event->value === 'provider.request.sent';
+        });
+
+        foreach ($outboundRequests as $request) {
+            $correlationId = $request->correlation_id;
+            $requestTime = $request->created_at;
+
+            // Look for corresponding response within a reasonable time window (e.g., 60 seconds)
+            $hasResponse = $this->events->contains(function (TraceEvent $event) use ($correlationId, $requestTime) {
+                if ($event->correlation_id !== $correlationId) {
+                    return false;
+                }
+
+                $isResponse = in_array($event->event->value, [
+                    'provider.response.received',
+                    'provider.error',
+                    'provider.timeout',
+                    'provider.exception',
+                ]);
+
+                if (!$isResponse) {
+                    return false;
+                }
+
+                // Response should be after request and within 60 seconds
+                $timeDiff = $event->created_at->diffInSeconds($requestTime);
+                return $timeDiff >= 0 && $timeDiff <= 60;
+            });
+
+            if (!$hasResponse) {
+                $anomalies[] = [
+                    'type' => 'orphaned_request',
+                    'severity' => 'high',
+                    'message' => "Orphaned request detected: Request sent at {$requestTime->format('Y-m-d H:i:s')} but no response received",
+                    'event_id' => $request->id,
+                    'correlation_id' => $correlationId,
+                    'provider' => $request->provider,
+                    'timestamp' => $requestTime->toIso8601String(),
+                ];
+            }
+        }
+
+        return $anomalies;
+    }
+
+    /**
+     * Detect excessive latency between request and response
+     */
+    private function detectExcessiveLatency(): array
+    {
+        $anomalies = [];
+        $threshold = config('trace.excessive_latency_threshold_ms', 5000);
+
+        // Group events by correlation ID to match requests with responses
+        $groupedByCorrelation = $this->events->groupBy('correlation_id');
+
+        foreach ($groupedByCorrelation as $correlationId => $events) {
+            $request = $events->first(function (TraceEvent $event) {
+                return $event->event->value === 'provider.request.sent'
+                    && $event->direction->value === 'outbound';
+            });
+
+            if (!$request) {
+                continue;
+            }
+
+            $response = $events->first(function (TraceEvent $event) {
+                return in_array($event->event->value, [
+                    'provider.response.received',
+                    'provider.error',
+                    'provider.timeout',
+                ]);
+            });
+
+            if (!$response) {
+                continue;
+            }
+
+            // Calculate latency
+            $latency = $response->created_at->diffInMilliseconds($request->created_at);
+
+            if ($latency > $threshold) {
+                $anomalies[] = [
+                    'type' => 'excessive_latency',
+                    'severity' => 'medium',
+                    'message' => "Excessive latency detected: {$latency}ms (threshold: {$threshold}ms)",
+                    'request_id' => $request->id,
+                    'response_id' => $response->id,
+                    'correlation_id' => $correlationId,
+                    'provider' => $request->provider ?? $response->provider,
+                    'latency_ms' => $latency,
+                    'threshold_ms' => $threshold,
+                    'request_timestamp' => $request->created_at->toIso8601String(),
+                    'response_timestamp' => $response->created_at->toIso8601String(),
+                ];
+            }
+        }
+
+        return $anomalies;
+    }
+
+    /**
      * Format detailed timeline as text with analysis
      */
     public function toDetailedText(): string
@@ -248,6 +384,7 @@ class DetailedTimeline extends Timeline
         $text = $this->toText();
 
         $issues = $this->analyze();
+        $anomalies = $this->detectAnomalies();
 
         if (!empty($issues)) {
             $text .= "\n\n" . str_repeat('=', 80) . "\n";
@@ -255,6 +392,15 @@ class DetailedTimeline extends Timeline
 
             foreach ($issues as $issue) {
                 $text .= "⚠️  [{$issue['severity']}] {$issue['message']}\n";
+            }
+        }
+
+        if (!empty($anomalies)) {
+            $text .= "\n\n" . str_repeat('=', 80) . "\n";
+            $text .= "Anomalies Detected:\n\n";
+
+            foreach ($anomalies as $anomaly) {
+                $text .= "🔍 [{$anomaly['severity']}] {$anomaly['message']}\n";
             }
         }
 

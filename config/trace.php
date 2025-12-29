@@ -22,6 +22,7 @@ return [
     |
     */
     'table' => env('PAYZEPHYR_TRACE_TABLE', 'payment_trace_events'),
+    'table_name' => env('PAYZEPHYR_TRACE_TABLE', 'payment_trace_events'), // Alias for consistency
 
     /*
     |--------------------------------------------------------------------------
@@ -59,6 +60,17 @@ return [
         'access_token',
         'refresh_token',
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Redaction Max Depth
+    |--------------------------------------------------------------------------
+    |
+    | Maximum recursion depth for payload redaction to prevent memory
+    | exhaustion on circular references or massive nested JSON payloads.
+    |
+    */
+    'redaction_max_depth' => env('PAYZEPHYR_TRACE_REDACTION_MAX_DEPTH', 10),
 
     /*
     |--------------------------------------------------------------------------
@@ -125,4 +137,15 @@ return [
     |
     */
     'webhook_duplicate_window' => 300, // 5 minutes
+
+    /*
+    |--------------------------------------------------------------------------
+    | Excessive Latency Threshold
+    |--------------------------------------------------------------------------
+    |
+    | Time in milliseconds between request and response that is considered
+    | excessive. Used for anomaly detection in timeline analysis.
+    |
+    */
+    'excessive_latency_threshold_ms' => env('PAYZEPHYR_TRACE_EXCESSIVE_LATENCY_THRESHOLD_MS', 5000),
 ];

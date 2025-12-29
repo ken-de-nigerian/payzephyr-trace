@@ -1,11 +1,13 @@
 <?php
 
+declare(strict_types=1);
+
 namespace PayZephyr\Trace\Middleware;
 
 use Closure;
 use GuzzleHttp\Exception\RequestException;
-use GuzzleHttp\Promise\PromiseInterface;
 use Illuminate\Support\Arr;
+use PayZephyr\Trace\DataTransferObjects\TraceData;
 use PayZephyr\Trace\Enums\TraceDirection;
 use PayZephyr\Trace\Enums\TraceEvent;
 use PayZephyr\Trace\Facades\Trace;
@@ -65,19 +67,20 @@ class TraceHttpMiddleware
             $startTime = microtime(true);
 
             // Record outbound request
-            Trace::record([
-                'payment_id' => $paymentId,
-                'provider' => $provider,
-                'correlation_id' => $correlationId,
-                'event' => TraceEvent::PROVIDER_REQUEST_SENT,
-                'direction' => TraceDirection::OUTBOUND,
-                'http_method' => $request->getMethod(),
-                'http_url' => (string) $request->getUri(),
-                'payload' => $this->extractRequestPayload($request),
-                'metadata' => [
+            $traceData = new TraceData(
+                paymentId: $paymentId,
+                event: TraceEvent::PROVIDER_REQUEST_SENT,
+                direction: TraceDirection::OUTBOUND,
+                payload: $this->extractRequestPayload($request),
+                provider: $provider,
+                correlationId: $correlationId,
+                metadata: [
                     'headers' => $this->sanitizeHeaders($request->getHeaders()),
                 ],
-            ]);
+                httpMethod: $request->getMethod(),
+                httpUrl: (string) $request->getUri(),
+            );
+            Trace::record($traceData);
 
             // Execute request and handle response/errors
             $promise = $handler($request, $options);
@@ -107,19 +110,20 @@ class TraceHttpMiddleware
     ): void {
         $responseTime = (int) ((microtime(true) - $startTime) * 1000);
 
-        Trace::record([
-            'payment_id' => $paymentId,
-            'provider' => $provider,
-            'correlation_id' => $correlationId,
-            'event' => TraceEvent::PROVIDER_RESPONSE_RECEIVED,
-            'direction' => TraceDirection::INBOUND,
-            'http_status_code' => $response->getStatusCode(),
-            'response_time_ms' => $responseTime,
-            'payload' => $this->extractResponsePayload($response),
-            'metadata' => [
+        $traceData = new TraceData(
+            paymentId: $paymentId,
+            event: TraceEvent::PROVIDER_RESPONSE_RECEIVED,
+            direction: TraceDirection::INBOUND,
+            payload: $this->extractResponsePayload($response),
+            provider: $provider,
+            correlationId: $correlationId,
+            metadata: [
                 'headers' => $this->sanitizeHeaders($response->getHeaders()),
             ],
-        ]);
+            httpStatusCode: $response->getStatusCode(),
+            responseTimeMs: $responseTime,
+        );
+        Trace::record($traceData);
     }
 
     /**
@@ -138,29 +142,33 @@ class TraceHttpMiddleware
         // Determine event type based on exception
         $event = $this->determineEventFromException($exception);
 
-        $data = [
-            'payment_id' => $paymentId,
-            'provider' => $provider,
-            'correlation_id' => $correlationId,
-            'event' => $event,
-            'direction' => TraceDirection::INBOUND,
-            'response_time_ms' => $responseTime,
-            'http_method' => $request->getMethod(),
-            'http_url' => (string) $request->getUri(),
-            'payload' => [
-                'error' => $exception->getMessage(),
-                'exception_class' => get_class($exception),
-            ],
+        $payload = [
+            'error' => $exception->getMessage(),
+            'exception_class' => get_class($exception),
         ];
+
+        $httpStatusCode = null;
 
         // Add response details if available
         if ($exception instanceof RequestException && $exception->hasResponse()) {
             $response = $exception->getResponse();
-            $data['http_status_code'] = $response->getStatusCode();
-            $data['payload']['response_body'] = $this->extractResponsePayload($response);
+            $httpStatusCode = $response->getStatusCode();
+            $payload['response_body'] = $this->extractResponsePayload($response);
         }
 
-        Trace::record($data);
+        $traceData = new TraceData(
+            paymentId: $paymentId,
+            event: $event,
+            direction: TraceDirection::INBOUND,
+            payload: $payload,
+            provider: $provider,
+            correlationId: $correlationId,
+            httpMethod: $request->getMethod(),
+            httpUrl: (string) $request->getUri(),
+            httpStatusCode: $httpStatusCode,
+            responseTimeMs: $responseTime,
+        );
+        Trace::record($traceData);
     }
 
     /**

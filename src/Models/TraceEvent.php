@@ -1,11 +1,13 @@
 <?php
 
+declare(strict_types=1);
+
 namespace PayZephyr\Trace\Models;
 
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Builder;
-use PayZephyr\Trace\Enums\TraceEvent as TraceEventEnum;
+use Illuminate\Database\Eloquent\Model;
 use PayZephyr\Trace\Enums\TraceDirection;
+use PayZephyr\Trace\Enums\TraceEvent as TraceEventEnum;
 
 class TraceEvent extends Model
 {
@@ -25,7 +27,7 @@ class TraceEvent extends Model
      */
     public function getTable(): string
     {
-        return config('trace.table', 'payment_trace_events');
+        return config('trace.table_name', config('trace.table', 'payment_trace_events'));
     }
 
     /**

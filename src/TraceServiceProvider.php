@@ -1,10 +1,13 @@
 <?php
 
+declare(strict_types=1);
+
 namespace PayZephyr\Trace;
 
 use Illuminate\Support\ServiceProvider;
 use PayZephyr\Trace\Commands\PruneTraceEventsCommand;
 use PayZephyr\Trace\Commands\TracePaymentCommand;
+use PayZephyr\Trace\Contracts\TraceRecorderInterface;
 use PayZephyr\Trace\Services\PayloadRedactor;
 use PayZephyr\Trace\Services\TraceRecorder;
 use PayZephyr\Trace\Services\TraceTimelineBuilder;
@@ -24,15 +27,17 @@ class TraceServiceProvider extends ServiceProvider
         // Register core services
         $this->app->singleton(PayloadRedactor::class);
 
+        // Bind interface to implementation (Open-Closed Principle)
+        $this->app->singleton(TraceRecorderInterface::class, TraceRecorder::class);
         $this->app->singleton(TraceRecorder::class, function ($app) {
             return new TraceRecorder($app->make(PayloadRedactor::class));
         });
 
         $this->app->singleton(TraceTimelineBuilder::class);
 
-        // Register facade accessor
+        // Register facade accessor - points to interface
         $this->app->singleton('payzephyr.trace', function ($app) {
-            return $app->make(TraceRecorder::class);
+            return $app->make(TraceRecorderInterface::class);
         });
 
         // Register timeline builder alias for convenience

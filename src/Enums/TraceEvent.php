@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace PayZephyr\Trace\Enums;
 
 enum TraceEvent: string

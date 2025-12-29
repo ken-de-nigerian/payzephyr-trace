@@ -1,56 +1,74 @@
 <?php
 
+declare(strict_types=1);
+
 namespace PayZephyr\Trace\Services;
 
 use Illuminate\Support\Str;
+use PayZephyr\Trace\Contracts\TraceRecorderInterface;
+use PayZephyr\Trace\DataTransferObjects\TraceData;
 use PayZephyr\Trace\Enums\TraceDirection;
 use PayZephyr\Trace\Enums\TraceEvent;
 use PayZephyr\Trace\Jobs\RecordTraceEventJob;
 use PayZephyr\Trace\Models\TraceEvent as TraceEventModel;
 
-class TraceRecorder
+/**
+ * Core trace recording service
+ * Implements TraceRecorderInterface following Open-Closed Principle
+ */
+class TraceRecorder implements TraceRecorderInterface
 {
     public function __construct(
-        private PayloadRedactor $redactor
+        private readonly PayloadRedactor $redactor
     ) {}
 
     /**
      * Record a trace event
      */
-    public function record(array $data): ?TraceEventModel
+    public function record(TraceData $data): ?TraceEventModel
     {
         if (!$this->isEnabled()) {
             return null;
         }
 
-        // Normalize the event data
-        $normalized = $this->normalizeEventData($data);
+        // Redact sensitive fields from payload
+        $redactedPayload = $this->redactor->redact($data->payload);
 
-        // Redact sensitive fields
-        if (!empty($normalized['payload'])) {
-            $normalized['payload'] = $this->redactor->redact($normalized['payload']);
-        }
+        // Create new TraceData with redacted payload
+        $redactedData = new TraceData(
+            paymentId: $data->paymentId,
+            event: $data->event,
+            direction: $data->direction,
+            payload: $redactedPayload,
+            provider: $data->provider,
+            correlationId: $data->correlationId,
+            metadata: $data->metadata,
+            httpMethod: $data->httpMethod,
+            httpUrl: $data->httpUrl,
+            httpStatusCode: $data->httpStatusCode,
+            responseTimeMs: $data->responseTimeMs,
+        );
 
         // Record async or sync based on config
         if ($this->shouldRecordAsync()) {
-            return $this->recordAsync($normalized);
+            return $this->recordAsync($redactedData);
         }
 
-        return $this->recordSync($normalized);
+        return $this->recordSync($redactedData);
     }
 
     /**
      * Record event synchronously
      */
-    private function recordSync(array $data): TraceEventModel
+    private function recordSync(TraceData $data): TraceEventModel
     {
-        return TraceEventModel::create($data);
+        return TraceEventModel::create($data->toArray());
     }
 
     /**
      * Record event asynchronously via queue
      */
-    private function recordAsync(array $data): ?TraceEventModel
+    private function recordAsync(TraceData $data): ?TraceEventModel
     {
         $job = new RecordTraceEventJob($data);
 
@@ -68,63 +86,10 @@ class TraceRecorder
     }
 
     /**
-     * Normalize event data to ensure all required fields are present
-     */
-    private function normalizeEventData(array $data): array
-    {
-        // Convert string event to enum if necessary
-        if (isset($data['event']) && is_string($data['event'])) {
-            $data['event'] = $this->normalizeEvent($data['event']);
-        }
-
-        // Convert string direction to enum if necessary
-        if (isset($data['direction']) && is_string($data['direction'])) {
-            $data['direction'] = TraceDirection::from($data['direction']);
-        }
-
-        // Ensure direction is set
-        if (!isset($data['direction'])) {
-            $data['direction'] = $this->inferDirection($data['event'] ?? null);
-        }
-
-        // Generate correlation ID if not provided
-        if (!isset($data['correlation_id'])) {
-            $data['correlation_id'] = $this->generateCorrelationId();
-        }
-
-        // Ensure metadata is an array
-        if (!isset($data['metadata'])) {
-            $data['metadata'] = [];
-        }
-
-        return $data;
-    }
-
-    /**
-     * Normalize event string to TraceEvent enum
-     */
-    private function normalizeEvent(string $event): TraceEvent
-    {
-        // Try exact match first
-        $enum = TraceEvent::tryFrom($event);
-
-        if ($enum !== null) {
-            return $enum;
-        }
-
-        // Default to CUSTOM for unknown events
-        return TraceEvent::CUSTOM;
-    }
-
-    /**
      * Infer direction based on event type
      */
-    private function inferDirection(?TraceEvent $event): TraceDirection
+    private function inferDirection(TraceEvent $event): TraceDirection
     {
-        if ($event === null) {
-            return TraceDirection::INTERNAL;
-        }
-
         return match ($event) {
             TraceEvent::PROVIDER_REQUEST_SENT => TraceDirection::OUTBOUND,
             TraceEvent::PROVIDER_RESPONSE_RECEIVED,
@@ -171,12 +136,15 @@ class TraceRecorder
      */
     public function paymentInitiated(string $paymentId, ?string $provider = null, array $payload = []): ?TraceEventModel
     {
-        return $this->record([
-            'payment_id' => $paymentId,
-            'provider' => $provider,
-            'event' => TraceEvent::PAYMENT_INITIATED,
-            'payload' => $payload,
-        ]);
+        $data = new TraceData(
+            paymentId: $paymentId,
+            event: TraceEvent::PAYMENT_INITIATED,
+            direction: TraceDirection::INTERNAL,
+            payload: $payload,
+            provider: $provider,
+        );
+
+        return $this->record($data);
     }
 
     /**
@@ -184,13 +152,16 @@ class TraceRecorder
      */
     public function paymentCompleted(string $paymentId, ?string $provider = null, array $payload = [], ?string $correlationId = null): ?TraceEventModel
     {
-        return $this->record([
-            'payment_id' => $paymentId,
-            'provider' => $provider,
-            'event' => TraceEvent::PAYMENT_COMPLETED,
-            'correlation_id' => $correlationId,
-            'payload' => $payload,
-        ]);
+        $data = new TraceData(
+            paymentId: $paymentId,
+            event: TraceEvent::PAYMENT_COMPLETED,
+            direction: TraceDirection::INTERNAL,
+            payload: $payload,
+            provider: $provider,
+            correlationId: $correlationId,
+        );
+
+        return $this->record($data);
     }
 
     /**
@@ -198,13 +169,16 @@ class TraceRecorder
      */
     public function paymentFailed(string $paymentId, ?string $provider = null, array $payload = [], ?string $correlationId = null): ?TraceEventModel
     {
-        return $this->record([
-            'payment_id' => $paymentId,
-            'provider' => $provider,
-            'event' => TraceEvent::PAYMENT_FAILED,
-            'correlation_id' => $correlationId,
-            'payload' => $payload,
-        ]);
+        $data = new TraceData(
+            paymentId: $paymentId,
+            event: TraceEvent::PAYMENT_FAILED,
+            direction: TraceDirection::INTERNAL,
+            payload: $payload,
+            provider: $provider,
+            correlationId: $correlationId,
+        );
+
+        return $this->record($data);
     }
 
     /**
@@ -212,13 +186,16 @@ class TraceRecorder
      */
     public function retryScheduled(string $paymentId, ?string $provider = null, array $payload = [], ?string $correlationId = null): ?TraceEventModel
     {
-        return $this->record([
-            'payment_id' => $paymentId,
-            'provider' => $provider,
-            'event' => TraceEvent::RETRY_SCHEDULED,
-            'correlation_id' => $correlationId,
-            'payload' => $payload,
-        ]);
+        $data = new TraceData(
+            paymentId: $paymentId,
+            event: TraceEvent::RETRY_SCHEDULED,
+            direction: TraceDirection::INTERNAL,
+            payload: $payload,
+            provider: $provider,
+            correlationId: $correlationId,
+        );
+
+        return $this->record($data);
     }
 
     /**
@@ -226,12 +203,15 @@ class TraceRecorder
      */
     public function retryExecuted(string $paymentId, ?string $provider = null, array $payload = [], ?string $correlationId = null): ?TraceEventModel
     {
-        return $this->record([
-            'payment_id' => $paymentId,
-            'provider' => $provider,
-            'event' => TraceEvent::RETRY_EXECUTED,
-            'correlation_id' => $correlationId,
-            'payload' => $payload,
-        ]);
+        $data = new TraceData(
+            paymentId: $paymentId,
+            event: TraceEvent::RETRY_EXECUTED,
+            direction: TraceDirection::INTERNAL,
+            payload: $payload,
+            provider: $provider,
+            correlationId: $correlationId,
+        );
+
+        return $this->record($data);
     }
 }

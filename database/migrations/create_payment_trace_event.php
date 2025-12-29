@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -12,15 +14,15 @@ return new class extends Migration
     public function up(): void
     {
         $connection = config('trace.connection');
-        $tableName = config('trace.table', 'payment_trace_events');
+        $tableName = config('trace.table_name', config('trace.table', 'payment_trace_events'));
 
         Schema::connection($connection)->create($tableName, function (Blueprint $table) {
             $table->id();
 
             // Core identifiers
-            $table->string('payment_id')->index();
+            $table->string('payment_id')->index(); // Reference field - indexed for high-speed lookups
             $table->string('provider')->nullable()->index();
-            $table->uuid('correlation_id')->nullable()->index();
+            $table->uuid('correlation_id')->nullable()->index(); // Indexed for incident analysis
 
             // Event details
             $table->string('event')->index();
@@ -39,8 +41,9 @@ return new class extends Migration
             // Timestamps
             $table->timestamps();
 
-            // Composite indexes for common queries
+            // Composite indexes for common queries and high-speed lookups during incident analysis
             $table->index(['payment_id', 'created_at']);
+            $table->index(['correlation_id', 'created_at']);
             $table->index(['provider', 'event']);
             $table->index(['created_at']); // For retention cleanup
         });
@@ -52,7 +55,7 @@ return new class extends Migration
     public function down(): void
     {
         $connection = config('trace.connection');
-        $tableName = config('trace.table', 'payment_trace_events');
+        $tableName = config('trace.table_name', config('trace.table', 'payment_trace_events'));
 
         Schema::connection($connection)->dropIfExists($tableName);
     }

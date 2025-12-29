@@ -1,8 +1,11 @@
 <?php
 
+declare(strict_types=1);
+
 namespace PayZephyr\Trace\Traits;
 
 use Illuminate\Http\Request;
+use PayZephyr\Trace\DataTransferObjects\TraceData;
 use PayZephyr\Trace\Enums\TraceDirection;
 use PayZephyr\Trace\Enums\TraceEvent;
 use PayZephyr\Trace\Facades\Trace;
@@ -58,15 +61,17 @@ trait CapturesWebhooks
             'headers' => $this->sanitizeHeaders($request->headers->all()),
         ];
 
-        return Trace::record([
-            'payment_id' => $paymentId,
-            'provider' => $provider,
-            'correlation_id' => $correlationId,
-            'event' => $event,
-            'direction' => TraceDirection::INBOUND,
-            'payload' => $payload,
-            'metadata' => $metadata,
-        ]);
+        $traceData = new TraceData(
+            paymentId: $paymentId,
+            event: $event,
+            direction: TraceDirection::INBOUND,
+            payload: $payload,
+            provider: $provider,
+            correlationId: $correlationId,
+            metadata: $metadata,
+        );
+
+        return Trace::record($traceData);
     }
 
     /**
@@ -106,16 +111,18 @@ trait CapturesWebhooks
             return null;
         }
 
-        return Trace::record([
-            'payment_id' => $paymentId,
-            'provider' => $provider,
-            'event' => TraceEvent::WEBHOOK_VALIDATION_FAILED,
-            'direction' => TraceDirection::INBOUND,
-            'payload' => [
+        $traceData = new TraceData(
+            paymentId: $paymentId,
+            event: TraceEvent::WEBHOOK_VALIDATION_FAILED,
+            direction: TraceDirection::INBOUND,
+            payload: [
                 'reason' => $reason,
                 'webhook_payload' => $payload,
             ],
-        ]);
+            provider: $provider,
+        );
+
+        return Trace::record($traceData);
     }
 
     /**
@@ -127,18 +134,25 @@ trait CapturesWebhooks
         \Throwable $exception,
         ?array $payload = null
     ): TraceEventModel {
-        return Trace::record([
-            'payment_id' => $paymentId,
-            'provider' => $provider,
-            'event' => TraceEvent::WEBHOOK_PROCESSING_FAILED,
-            'direction' => TraceDirection::INBOUND,
-            'payload' => [
+        $traceData = new TraceData(
+            paymentId: $paymentId,
+            event: TraceEvent::WEBHOOK_PROCESSING_FAILED,
+            direction: TraceDirection::INBOUND,
+            payload: [
                 'error' => $exception->getMessage(),
                 'exception_class' => get_class($exception),
                 'trace' => $exception->getTraceAsString(),
                 'webhook_payload' => $payload,
             ],
-        ]);
+            provider: $provider,
+        );
+
+        $result = Trace::record($traceData);
+        if ($result === null) {
+            throw new \RuntimeException('Failed to record webhook processing failure');
+        }
+
+        return $result;
     }
 
     /**
