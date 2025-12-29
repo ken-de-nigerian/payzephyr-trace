@@ -1,0 +1,52 @@
+{
+  "name": "kendenigerian/payzephyr-trace",
+  "description": "End-to-end payment tracing & forensic analysis for Laravel applications",
+  "type": "library",
+  "keywords": ["laravel", "payment", "tracing", "forensics", "debugging", "observability"],
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "Nwaneri Chukwunyere Kenneth",
+      "email": "ken.de.nigerian@gmail.com"
+    }
+  ],
+  "require": {
+    "php": "^8.2",
+    "illuminate/database": "^10.0|^11.0|^12.0",
+    "illuminate/http": "^10.0|^11.0|^12.0",
+    "illuminate/support": "^10.0|^11.0|^12.0",
+    "illuminate/console": "^10.0|^11.0"
+  },
+  "require-dev": {
+    "orchestra/testbench": "^8.0|^9.0",
+    "phpunit/phpunit": "^10.0",
+    "pestphp/pest": "^2.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "PayZephyr\\Trace\\": "src/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "PayZephyr\\Trace\\Tests\\": "tests/"
+    }
+  },
+  "extra": {
+    "laravel": {
+      "providers": [
+        "PayZephyr\\Trace\\TraceServiceProvider"
+      ],
+      "aliases": {
+        "Trace": "PayZephyr\\Trace\\Facades\\Trace"
+      }
+    }
+  },
+  "minimum-stability": "dev",
+  "prefer-stable": true,
+  "config": {
+    "allow-plugins": {
+      "pestphp/pest-plugin": true
+    }
+  }
+}
